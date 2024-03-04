@@ -1,0 +1,52 @@
+name: nlp-research-template
+channels:
+  - conda-forge
+  - https://ftp.osuosl.org/pub/open-ce/1.9.1/ # needed for binaries compiled for ppc64le
+  - defaults # needed for some small packages (leveldb, ...)
+  
+dependencies:
+  - python=3.10 # or don't specify the version and use latest stable
+  - pytorch=2.0.1 # OpenCE version 1.9
+  # CUDA only for Linux (on compute server machine)
+  - cudatoolkit=11.8 # OpenCE version 1.9
+  - dargparser
+  - wandb
+  - sentence-transformers=2.3.1
+  - lightning>=2.1.0
+  - transformers
+  - tokenizers
+  - datasets
+  - loguru
+  - tqdm
+  - nltk
+  - faiss
+
+  # Good to have
+  - numpy
+  - matplotlib
+  - pandas
+  - scikit-learn
+  - seaborn
+  - einops
+
+  # Misc
+  - jsonlines
+  - zstandard
+  - debugpy
+  - tqdm
+
+  # Dev dependencies
+  - black
+  - ruff
+
+  # pip dependencies
+  - pip
+  - pip:
+      - warmup-scheduler
+      - pipx
+      - simple_parsing
+      - print-on-steroids[exceptions]
+
+# Non-standard section listing target platforms for conda-lock:
+platforms:
+  - linux-ppc64le

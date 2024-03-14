@@ -2,7 +2,7 @@
 
 [![Docker Hub](https://img.shields.io/docker/v/konstantinjdobler/nlp-research-template/torch2.0.0-cuda11.8?color=blue&label=docker&logo=docker)](https://hub.docker.com/repository/docker/taczin/next_level/tags) ![License: MIT](https://img.shields.io/github/license/konstantinjdobler/nlp-research-template?color=green)
 
-Code for [NextLevelBERT: Investigating Masked Language Modeling with Higher-Level Representations for Long Documents](https://pages.github.com/](https://arxiv.org/abs/2402.17682)https://arxiv.org/abs/2402.17682). 
+Code for [NextLevelBERT: Investigating Masked Language Modeling with Higher-Level Representations for Long Documents](https://arxiv.org/abs/2402.17682).
 
 ## Setup
 It's recommended to use [`mamba`](https://github.com/mamba-org/mamba) to manage dependencies. `mamba` is a drop-in replacement for `conda` re-written in C++ to speed things up significantly (you can stick with `conda` though). To provide reproducible environments, we use `conda-lock` to generate lockfiles for each platform.

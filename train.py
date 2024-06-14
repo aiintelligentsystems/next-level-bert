@@ -89,7 +89,7 @@ def main(parsed_arg_groups: tuple[TrainingArgs, MiscArgs]):
         **wandb_extra_args,
     )
 
-    # pick right batch size for preprocessing. assumes all GPUs are of the same type
+    # pick right batch size for preprocessing, depending on available CUDA memory (hacky)
     x, y = torch.cuda.mem_get_info(torch.device("cuda:0"))
     y = y // 1024**2
     if y < 34000:

@@ -55,6 +55,7 @@ class NextLevelDatamodule(L.LightningDataModule):
         super().__init__()
         self.args = training_args
         self.misc = misc_args
+        self.subset_size = None
         self.model = model
         self.collate = lambda x: model.pretraining_collate(
             x, masking_rate=self.args.masking_probability
@@ -63,15 +64,6 @@ class NextLevelDatamodule(L.LightningDataModule):
         self.drop_last_batch = True
         if self.args.dataset == "pile_books":
             self.dataset = PileBooks(
-                first_level_tokenizer,
-                second_level_tokenizer,
-                self.args,
-                self.misc,
-                len_subset=self.subset_size,
-                recompute=self.args.recompute,
-            )
-        elif self.args.dataset == "pile":
-            self.dataset = PileDeduplicated(
                 first_level_tokenizer,
                 second_level_tokenizer,
                 self.args,
@@ -394,8 +386,6 @@ class PileBooks(PretrainingDataset):
     def load_data(self, split):
         if os.path.isdir(self.split_data_path):
             data = datasets.load_from_disk(self.split_data_path)
-            # if self.len_subset is None:
-            #    #data = load_dataset("the_pile_books3", split='train')
             if self.len_subset is not None:
                 data["train"] = data["train"].select(
                     range(min(int(self.len_subset * 0.8), len(data["train"])))

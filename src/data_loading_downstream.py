@@ -50,7 +50,6 @@ class DownstreamDatamodule(L.LightningDataModule):
         super().__init__()
         self.args = eval_args
         self.misc = misc_args
-        self.subset_size = 1
         self.num_preprocessing_splits = 1
         self.model = model
         self.recompute = self.args.recompute
@@ -66,7 +65,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
             else:
@@ -76,7 +74,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
         elif self.args.eval_dataset == "ghomasHudson___muld":
@@ -90,7 +87,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
             else:
@@ -100,7 +96,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
         elif self.args.eval_dataset == "quality":
@@ -114,7 +109,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
             else:
@@ -124,7 +118,6 @@ class DownstreamDatamodule(L.LightningDataModule):
                         second_level_tokenizer,
                         self.args,
                         self.misc,
-                        len_subset=self.subset_size,
                     )
                 )
         else:
@@ -300,7 +293,6 @@ class DownstreamDataset(torch.utils.data.Dataset):
         encoder,
         training_args: "EvaluationArgs",
         misc_args: "MiscArgs",
-        len_subset=None,
         path=None,
     ):
         super().__init__()
@@ -308,7 +300,6 @@ class DownstreamDataset(torch.utils.data.Dataset):
         self.misc = misc_args
         self.encoder = encoder
         self.dataset_name = self.args.eval_dataset
-        self.len_subset = len_subset
         self.chunking = self.args.chunking
         self.processed_data_path = None
         self.num_preprocessing_splits = 1
@@ -412,7 +403,7 @@ class DownstreamDatasetForNextLevel(torch.utils.data.Dataset):
         - creating start and end batch ids for sequences of chunks
 
         Returns: sentence_embeddings, dataset_doc_level, dataset_meta
-        - sentence_embeddings: a torch tensor of shape (num_sentences + num_docs, encoder_embed_dim). After every document's sentences a zero vector is inserted to separate documents.
+        - sentence_embeddings: a huggingface dataset of shape (num_sentences + num_docs, encoder_embed_dim). After every document's sentences a zero vector is inserted to separate documents.
         - dataset_doc_level: dataset with documents per row. contains information for each document
         - dataset_meta: contains the tokenized text chunks before encoding
         """
@@ -505,6 +496,7 @@ class DownstreamDatasetForNextLevel(torch.utils.data.Dataset):
         # embeddings are saved to where save_file_path points to
         dataset.set_format(type="torch", columns=["chunks", "masks"], output_all_columns=True)
         dataset.save_to_disk(self.processed_data_path + f"/{split}/" + "dataset_meta/")
+        dataset = dataset.load_from_disk(self.processed_data_path + f"/{split}/" + "dataset_meta/")
         spawn_processes_helper(
             dataset,
             fn_kwargs={
@@ -514,7 +506,7 @@ class DownstreamDatasetForNextLevel(torch.utils.data.Dataset):
             remove_columns=["chunks", "masks"],
             desc="Encoding chunks...",
             batched=True,
-            batch_size=int(100 * self.args.encoder_batch_size),
+            batch_size=int(self.args.encoder_batch_size),
             save_file_path=self.processed_data_path + f"/{split}/",
         )
         logger.info(f"Saved processed dataset to {self.processed_data_path}/{split}/.")
@@ -586,18 +578,22 @@ class MuldMovieCharacters(DownstreamDataset):
         encoder,
         training_args: "TrainingArgs",
         misc_args: "MiscArgs",
-        len_subset=None,
         path=None,
     ):
-        super().__init__(tokenizer, encoder, training_args, misc_args, len_subset, path)
+        super().__init__(tokenizer, encoder, training_args, misc_args, path)
         self.num_preprocessing_splits = 1
         self.properties = ("is_labeled",)
         self.needs_finetuning = True
         self.output_size = 1
+        # this has effect on F1 score and loss weighting (for label imbalance)
+        self.is_hero_pos_label = training_args.is_muld_pos_label_hero
         # pos_weight to account for label imbalance during training is manually calculated on train split
-        # and hard coded, hence it might overweight one label in validation loss
+        # and hard coded
         if self.args.apply_class_balance_to_loss:
-            self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([0.37762]))
+            if self.is_hero_pos_label:
+                self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([0.37762]))
+            else:
+                self.loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([0.62238]))
         else:
             self.loss_fn = torch.nn.BCEWithLogitsLoss()
         self.available_splits = ("train", "validation", "test")
@@ -625,10 +621,13 @@ class MuldMovieCharacters(DownstreamDataset):
         pass
 
     def dataset_specific_preprocessing(
-        self, data, label2id={"Villain/Antagonist": 0, "Hero": 1}, **kwargs
+        self, data, **kwargs
     ):
         map_kwargs = kwargs
-
+        if self.is_hero_pos_label:
+            label2id = {"Villain/Antagonist": 0, "Hero": 1}
+        else:
+            label2id = {"Villain/Antagonist": 1, "Hero": 0}
         is_multi_split = isinstance(data, DatasetDict)
 
         def _create_document_title(example):
@@ -699,10 +698,10 @@ class MuldMovieCharacters(DownstreamDataset):
         accuracy = metric(torch.sigmoid(predictions), targets.int().cpu())
         print(acc_manual)
         metric2 = torchmetrics.classification.BinaryF1Score()
-        f1 = metric2(torch.sigmoid(predictions), targets.int().cpu())
+        f1 = metric2(torch.abs(torch.sigmoid(predictions) - 1), torch.abs(targets.int().cpu() - 1))
         if return_binary:
-            return f1, accuracy, correct
-        return f1, accuracy
+            return {"accuracy":accuracy.item(), "f1":f1.item(), 'is_correct':correct}
+        return {"accuracy":accuracy.item(), "f1":f1.item()}
 
 
 class BookSumSTS(DownstreamDataset):
@@ -712,9 +711,8 @@ class BookSumSTS(DownstreamDataset):
         encoder,
         training_args: "TrainingArgs",
         misc_args: "MiscArgs",
-        len_subset=None,
     ):
-        super().__init__(tokenizer, encoder, training_args, misc_args, len_subset)
+        super().__init__(tokenizer, encoder, training_args, misc_args)
         self.num_preprocessing_splits = 1
         self.properties = "is_summarization"
         self.needs_finetuning = False
@@ -868,10 +866,9 @@ class QualityQA(DownstreamDataset):
         encoder,
         training_args: "TrainingArgs",
         misc_args: "MiscArgs",
-        len_subset=None,
         path=None,
     ):
-        super().__init__(tokenizer, encoder, training_args, misc_args, len_subset, path)
+        super().__init__(tokenizer, encoder, training_args, misc_args, path)
         self.num_preprocessing_splits = 1
         self.properties = ("is_labeled",)
         self.needs_finetuning = True

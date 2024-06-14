@@ -28,22 +28,6 @@ class ModelArgs:
     adam_epsilon: float = 1e-8
 
 
-class MLMPredictionHead(nn.Module):
-    def __init__(self, hidden_size) -> None:
-        super(MLMPredictionHead, self).__init__()
-        self.dense = nn.Linear(hidden_size, hidden_size)
-        self.act_fn = torch.nn.GELU()
-        self.LayerNorm = torch.nn.LayerNorm(hidden_size)
-        self.decoder = nn.Linear(hidden_size, hidden_size, bias=False)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.act_fn(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states)
-        hidden_states = self.decoder(hidden_states)
-        return hidden_states
-
-
 class PretrainedModel(L.LightningModule):
     def __init__(self, training_args, misc_args):
         super().__init__()
@@ -238,6 +222,7 @@ class PretrainedModel(L.LightningModule):
             predictions, self.trainer.datamodule.downstream_dataset["test"]
         )
         print(results)
+        self.log_dict({"test/" + metric + "/full_epoch": value for metric, value in results.items()})
 
     def downstream_collate(self, examples):
         examples = {key: [example[key] for example in examples] for key in examples[0]}
@@ -296,7 +281,6 @@ class PretrainedLongformer(PretrainedModel):
         super().__init__(training_args, misc_args)
         if not training_args.resume_training:
             self.save_hyperparameters(ignore=["effective_batch_size_per_step"])
-        # self.hparams.update(vars(hparams))
         self.args = training_args
         self.adhoc_args = ModelArgs()
         self.misc_args = misc_args
@@ -437,7 +421,7 @@ class AvgSBERTSentences(DownstreamModel):
         self.adhoc_args = ModelArgs()
         embedding_size = self._get_second_level_tokenizer_dim(second_level_tokenizer)
         self.second_level_tokenizer = second_level_tokenizer
-        self.max_sequence_len = 256
+        self.max_sequence_len = self.args.max_sequence_length
 
     def forward(self, batch):
         if self.args.aggregate in ["all", "concat"] or self.args.eval_dataset == "booksum_chapter":
@@ -483,3 +467,4 @@ class AvgSBERTSentences(DownstreamModel):
             predictions, self.trainer.datamodule.downstream_dataset["test"]
         )
         print(results)
+        self.log_dict({"test/" + metric + "/full_epoch": value for metric, value in results.items()})

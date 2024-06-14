@@ -21,13 +21,13 @@ class TrainingArgs:
         aliases="--checkpoint",
     )
 
-    dataset: Literal["pile_books"] = dArg(
+    dataset: Literal["pile_books", "pile"] = dArg(
         default="pile_books",
-        help="Dataset to use for pretraining. Can be pile or pile_books.",
+        help="Dataset to use for pretraining. Currently only pile_books supported.",
     )
     max_sequence_length: int = dArg(
         default=512,
-        help="Sequence length for dataset tokenization.",
+        help="Sequence length of the next-level model.",
         aliases=["--max_seq_length", "--block_size"],
     )
     overwrite_data_cache: bool = dArg(
@@ -61,16 +61,14 @@ class TrainingArgs:
         default=None,
         help="Which chunking strategy to use for encoding the input with the second-level tokenizer",
     )
-    load_from_pretrained: bool = dArg(
-        default=True, help="Whether to initialize the model with pretrained encoder's weights."
-    )
-    encoder_batch_size: int = dArg(
+    second_level_tokenizer_batch_size: int = dArg(
         default=2048,
         help="What batch size to use for computing the sentence vectors during preprocessing.",
     )
     loss_func: str = dArg(
-        default="smoothl1", help="Which loss function to use. Choose from cosine, l1 or l2."
+        default="smoothl1", help="Which loss function to use for pretraining. Choose from cosine, l1 or l2."
     )
+    
     ####### Hardware ###########
     accelerator: Literal["gpu", "cpu", "tpu", "mps", "auto"] = dArg(
         default="auto",
@@ -143,7 +141,7 @@ class TrainingArgs:
     )
     only_tune_cls_head: bool = dArg(
         default=False,
-        help="If True, the optimizer only receives the parameters of the cls head and the rest of the network is frozen.",
+        help="If True, during fine-tuning the optimizer only receives the parameters of the cls head and the rest of the network is frozen.",
         aliases=["--cls_only"],
     )
     learning_rate: float = dArg(default=5e-5, aliases="--lr")
@@ -162,22 +160,29 @@ class TrainingArgs:
         default="val/loss", help="Metric to use for early stopping."
     )
 
+    ### Dataset specific flags
+    is_muld_pos_label_hero: bool = dArg(
+        default=False,
+        help=("Whether hero or villain is the positive lablel which makes a difference e.g. for F1-score. "
+              "Hero is the majority class, so by default it is defined as negative label 0.")
+    )
+
     ### Model
-    dropout: float = dArg(default=0.1, help="Dropout for NextLevelLM. Ignored when initializing from the pretrained encoder's weights.")
-    nhead: int = dArg(default=4, help="Number of Heads for NextLevelLM. Ignored when initializing from the pretrained encoder's weights.")
-    num_layers: int = dArg(default=2, help="Number of Layers for NextLevelLM. Ignored when initializing from the pretrained encoder's weights.")
+    dropout: float = dArg(default=0.1, help="Dropout for custom NextLevelLM. Ignored otherwise.")
+    nhead: int = dArg(default=4, help="Number of Heads for custom NextLevelLM. Ignored otherwise.")
+    num_layers: int = dArg(default=2, help="Number of Layers for custom NextLevelLM. Ignored otherwise.")
 
     masking_probability: float = dArg(default=0.15, help="Masking probability")
     evaluate_downstream: bool = dArg(
         default=False, help="Whether to evaluate the model on a downstream task."
     )
     mask_scheme: Literal["original_bert", "only_mask"] = dArg(
-        default="original_bert", help="Masking scheme to use. Use original_bert for same behavior as in (Ro)BERT(a), replacing also some of the selected tokens with random tokens or retaining the original one. only_mask replaces all selected tokens by the MASK token."
+        default="original_bert", help="Masking scheme to use."
     )
-    aggregate: Literal["all", "last", "concat", "cls", "pool"] = dArg(
+    aggregate: Literal["all", "last", "concat", "label", "cls", "pool"] = dArg(
         default="concat",
         help=("Selects a different representation as input to the DownstreamModel's classifier head. Has no effect for other models."
-              "('all' = document vector + SBERT extra chunk, 'last' = extra chunk only, 'concat' = concatenation of document vector + extra chunk (next level encoded),"
+              "('all' = document vector + SBERT extra chunk, 'last' = extra chunk only, 'concat' = concattenation of document vector + extra chunk (next level encoded),"
               " 'cls' = only CLS token embedding, 'pool' = document vector only, 'label' = test label info leak debugging only)"
               ),
     )
@@ -185,6 +190,11 @@ class TrainingArgs:
         default="mean",
         help=("Type of pooling to apply to create a document embedding from the sequence. "
               "'mean' (default) = average pooling, 'max' = max pooling"),
+    )
+    use_custom_roberta_config: bool = dArg(
+        default=False,
+        help="Whether to use a customizable RoBERTa-based next-level model, instead of initializing the next-level model with the"
+        "encoder model's architecture and weights. This model will have randomly initialized weights and can be customized with the flags --dropout --num_layers --num_heads.",
     )
 
     def __post_init__(self):

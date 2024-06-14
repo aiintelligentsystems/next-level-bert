@@ -92,16 +92,11 @@ class NextLevelLM(L.LightningModule):
         self.num_layers = num_layers
         self.max_sequence_len = self.args.max_sequence_length
         self.mask_scheme = self.args.mask_scheme
-        if not self.args.load_from_pretrained:
+        if not self.args.use_custom_roberta_config:
             self.bert = AutoModel.from_pretrained(f"sentence-transformers/{self.args.encoder_name}")
             self.bert_configuration = AutoConfig.from_pretrained(
                 f"sentence-transformers/{self.args.encoder_name}"
             )
-            if self.args.encoder_name in ["all-distilroberta-v1", "all-mpnet-base-v2"]:
-                self.max_sequence_len = self.bert_configuration.max_position_embeddings - 2
-            else:
-                self.max_sequence_len = self.bert_configuration.max_position_embeddings
-            self.args.max_sequence_length = self.max_sequence_len
             self.bert.pooler = None
             self.bert.embeddings.word_embeddings = None
 
@@ -109,11 +104,12 @@ class NextLevelLM(L.LightningModule):
             self.bert_configuration = AutoConfig.from_pretrained(
                 f"sentence-transformers/{self.args.encoder_name}"
             )
-            self.bert = AutoModel(config=self.bert_configuration)
+            self.bert = AutoModel.from_config(self.bert_configuration)
             self.args.max_sequence_length = self.max_sequence_len
             self.bert.pooler = None
             self.bert.embeddings.word_embeddings = None
         self.cls = SimpleClsHead(self.bert_configuration)
+        self.bert.embeddings.position_embeddings = torch.nn.Embedding(self.max_sequence_len, self.bert_configuration.hidden_size)
 
         # 0 is padding, 1 is [CLS], 2 is [SEP], 3 is [MASK]
         self.special_vec_embeddings = nn.Embedding(
@@ -133,10 +129,8 @@ class NextLevelLM(L.LightningModule):
 
         self.metric = torch.nn.CosineSimilarity(dim=-1)
         self.save_hyperparameters(ignore=["second_level_tokenizer"])
-        self.scale_mlm = self.args.loss_weights[0]
         self.val_step_outputs = []
         self.test_step_outputs = []
-        self.previous_loss = 1000
 
     def _get_second_level_tokenizer_dim(self, second_level_tokenizer: SentenceTransformer):
         return next(second_level_tokenizer.parameters()).shape[1]
@@ -158,16 +152,6 @@ class NextLevelLM(L.LightningModule):
         prediction_scores = self.cls(sequence_output)
         return prediction_scores, sequence_output, hidden_states[1]
 
-    # Mean Pooling - Take attention mask into account for correct averaging
-    # taken from https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
-    def mean_pooling(self, model_output, attention_mask):
-        token_embeddings = (
-            model_output  # First element of model_output contains all token embeddings
-        )
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-            input_mask_expanded.sum(1), min=1e-9
-        )
 
     # this custom loss function is necessary to calculate the loss per sample, since the number of masks can be different for each sample
     def within_sample_loss(self, prediction_scores, targets, masking):
@@ -227,8 +211,6 @@ class NextLevelLM(L.LightningModule):
     def training_step(self, batch):
         input_embeddings = batch["input_embeddings"]
         masks = batch["masks"]
-        # masked_input_embeddings, segment_ids, attention_mask = self.create_synthetic_data(batch)
-        # prediction_scores = self((masked_input_embeddings, segment_ids, attention_mask))
         out = self(batch)
         prediction_scores, sequence_output, hidden_states = out
         mlm_loss = self.within_sample_loss(
@@ -505,7 +487,7 @@ class CustomizedSBERT(SentenceTransformer):
         #    input_was_string = True
 
         if device is None:
-            device = self._target_device
+            device = self.device
 
         self.to(device)
 
@@ -683,6 +665,7 @@ def _get_normalized_accuracy(num_classes, softmax_dim=-1):
     return _normalized_accuracy, acc_metric
 
 
+# based on https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
 def sequence_pooling(model_output, attention_mask, aggregator='mean'):
         token_embeddings = (
             model_output  # First element of model_output contains all token embeddings
@@ -693,8 +676,6 @@ def sequence_pooling(model_output, attention_mask, aggregator='mean'):
                 input_mask_expanded.sum(1), min=1e-9
                 )
         elif aggregator == 'max':
-            # following line has side effect on token_embeddings, might be unwanted
-            # token_embeddings[input_mask_expanded == 0] = float("-inf")
             embeddings_masked = torch.where(input_mask_expanded != 0, token_embeddings, float("-inf"))
             return torch.max(embeddings_masked, dim=1)[0]
         else:
@@ -728,7 +709,7 @@ class DownstreamModel(L.LightningModule):
         else:
             self.output_size = None
             self.loss_fn = None
-        self.max_sequence_len = model.max_sequence_len if model is not None else 256
+        self.max_sequence_len = model.max_sequence_len if model is not None else 512
         self.cls = self._construct_cls()
         self.acc_metric, self._acc_metric_module = _get_normalized_accuracy(self.output_size)
         self.test_predictions = []
@@ -758,6 +739,7 @@ class DownstreamModel(L.LightningModule):
         else:
             return None
 
+
     def forward(self, batch):
         if self.model is None:
             raise ValueError('No model was provided during initialization, cannot call forward!')
@@ -768,7 +750,7 @@ class DownstreamModel(L.LightningModule):
             if self.args.aggregate in ["all", "concat"]:
                 # mean pooling over all tokens except the cls token and the sep token
                 document_vector = sequence_pooling(
-                    batch["input_embeddings"][:, 1:],
+                    out[:, 1:],
                     (batch["attention_mask"]*(batch["masks"]['sep_mask']==0))[:, 1:],
                     aggregator=self.args.pooling_aggregator,
                     )
@@ -912,6 +894,7 @@ class DownstreamModel(L.LightningModule):
             predictions, self.trainer.datamodule.downstream_dataset["test"]
         )
         print(results)
+        self.log_dict({"test/" + metric + "/full_epoch": value for metric, value in results.items()})
 
     def configure_optimizers(self):
         if self.global_rank == 0:

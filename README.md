@@ -66,9 +66,3 @@ Then run fine-tuning and evaluation by:
 bash scripts/downstream.sh
 ```
 Note that the quality dataset needs to be downloaded first. (See `scripts/download_quality.sh`.) The BookSum dataset is used for zero-shot embedding quality evaluation and is not fine-tuned on.
-<<<<<<< HEAD
-
-## In the Future
-We are currently working on making model checkpoints available and providing an easier way of using the model for inference. Stay tuned.
-=======
->>>>>>> 85ab52a (model checkpoints, inference example, code cleaning)
